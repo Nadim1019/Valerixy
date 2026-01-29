@@ -45,3 +45,4 @@ tmp/
 temp/
 .cache/
 tests/results/
+buethack_key.pem

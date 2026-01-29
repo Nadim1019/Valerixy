@@ -293,8 +293,8 @@ jobs:
             git pull origin main
             
             echo "🔨 Rebuilding and restarting services..."
-            docker compose down
-            docker compose up --build -d
+            sudo docker compose down
+            sudo docker compose up --build -d
             
             echo "⏳ Waiting for services to start..."
             sleep 30
@@ -310,7 +310,7 @@ jobs:
               echo "✅ Deployment successful! All services healthy."
             else
               echo "⚠️ Warning: Some services may not be healthy"
-              docker compose ps
+              sudo docker compose ps
               exit 1
             fi
 
