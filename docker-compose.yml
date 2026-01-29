@@ -137,9 +137,38 @@ services:
       - valerix-network
     restart: unless-stopped
 
+  # ============================================
+  # BACKUP SERVICE
+  # ============================================
+  backup-service:
+    build:
+      context: ./backup-service
+      dockerfile: Dockerfile
+    container_name: valerix-backup
+    environment:
+      ORDER_DB_USER: ${ORDER_DB_USER:-order_admin}
+      ORDER_DB_PASSWORD: ${ORDER_DB_PASSWORD:-order_secret}
+      ORDER_DB_NAME: ${ORDER_DB_NAME:-order_db}
+      INVENTORY_DB_USER: ${INVENTORY_DB_USER:-inventory_admin}
+      INVENTORY_DB_PASSWORD: ${INVENTORY_DB_PASSWORD:-inventory_secret}
+      INVENTORY_DB_NAME: ${INVENTORY_DB_NAME:-inventory_db}
+      VALERIX_BACKUP_URL: ${VALERIX_BACKUP_URL:-http://localhost:9999/backup}
+      VALERIX_BACKUP_TOKEN: ${VALERIX_BACKUP_TOKEN:-}
+    volumes:
+      - backup-data:/backups
+    depends_on:
+      order-db:
+        condition: service_healthy
+      inventory-db:
+        condition: service_healthy
+    networks:
+      - valerix-network
+    restart: unless-stopped
+
 volumes:
   order-db-data:
   inventory-db-data:
+  backup-data:
 
 networks:
   valerix-network:

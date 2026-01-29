@@ -1,0 +1,5 @@
+# Snapshots every 6 hours (4 recovery points per day)
+0 0,6,12,18 * * * /scripts/backup.sh >> /var/log/backup.log 2>&1
+
+# Daily push at 23:55 - bundles all snapshots into ONE call
+55 23 * * * /scripts/daily-push.sh >> /var/log/backup.log 2>&1
