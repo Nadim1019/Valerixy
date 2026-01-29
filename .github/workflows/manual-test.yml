@@ -1,0 +1,85 @@
+name: Manual Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      orders:
+        description: 'Number of orders to create'
+        required: true
+        default: '20'
+        type: string
+      gremlin:
+        description: 'Enable Gremlin latency'
+        required: false
+        default: false
+        type: boolean
+      schrodinger:
+        description: 'Enable Schrödinger crash'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  manual-load-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          cat > .env << 'EOF'
+          ORDER_DB_URL=postgresql://order_user:order_pass@order-db:5432/order_db
+          INVENTORY_DB_URL=postgresql://inventory_user:inventory_pass@inventory-db:5432/inventory_db
+          AZURE_SERVICE_BUS_CONNECTION_STRING=
+          NODE_ENV=test
+          EOF
+
+      - name: Start services
+        run: |
+          docker compose up -d
+          echo "Waiting for services..."
+          sleep 45
+
+      - name: Wait for healthy services
+        run: |
+          for i in {1..30}; do
+            ORDER_OK=$(curl -s http://localhost:3001/health | jq -e '.status == "healthy"' 2>/dev/null && echo "yes" || echo "no")
+            INV_OK=$(curl -s http://localhost:3002/health | jq -e '.status == "healthy"' 2>/dev/null && echo "yes" || echo "no")
+            
+            if [[ "$ORDER_OK" == "yes" ]] && [[ "$INV_OK" == "yes" ]]; then
+              echo "✓ All services healthy"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run load test
+        run: |
+          chmod +x ./tests/load-test.sh
+          
+          ARGS="--orders ${{ inputs.orders }}"
+          
+          if [[ "${{ inputs.gremlin }}" == "true" ]]; then
+            ARGS="$ARGS --gremlin"
+          fi
+          
+          if [[ "${{ inputs.schrodinger }}" == "true" ]]; then
+            ARGS="$ARGS --schrodinger"
+          fi
+          
+          echo "Running: ./tests/load-test.sh $ARGS"
+          ./tests/load-test.sh $ARGS
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-test-results-${{ github.run_number }}
+          path: tests/results/
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v

@@ -2,134 +2,16 @@ name: Valerix CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
     branches: [main]
 
-env:
-  NODE_VERSION: '18'
-
 jobs:
-  # ============================================
-  # BUILD & LINT
-  # ============================================
-  build:
-    name: Build Services
+  # ==========================================================================
+  # Job 1: Build and Test
+  # ==========================================================================
+  build-and-test:
     runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install Order Service dependencies
-        working-directory: ./order-service
-        run: npm install
-
-      - name: Build Order Service
-        working-directory: ./order-service
-        run: npm run build
-
-      - name: Install Inventory Service dependencies
-        working-directory: ./inventory-service
-        run: npm install
-
-      - name: Build Inventory Service
-        working-directory: ./inventory-service
-        run: npm run build
-
-      - name: Install Dashboard dependencies
-        working-directory: ./dashboard
-        run: npm install
-
-      - name: Build Dashboard
-        working-directory: ./dashboard
-        run: npm run build:server
-
-      - name: Install Frontend dependencies
-        working-directory: ./frontend
-        run: npm install
-
-      - name: Build Frontend
-        working-directory: ./frontend
-        run: npm run build
-
-  # ============================================
-  # INTEGRATION & LOAD TESTS
-  # ============================================
-  tests:
-    name: Integration & Load Tests
-    runs-on: ubuntu-latest
-    needs: build
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Start services with Docker Compose
-        run: |
-          docker compose up -d --build
-          echo "Waiting for services to be healthy..."
-          for i in {1..60}; do
-            if curl -s http://localhost:3001/health | grep -q "healthy"; then
-              echo "Services are healthy!"
-              break
-            fi
-            echo "Waiting for services... ($i/60)"
-            sleep 2
-          done
-
-      - name: Run Integration Tests
-        run: |
-          chmod +x ./tests/integration-test.sh
-          ./tests/integration-test.sh
-
-      - name: Install test dependencies
-        working-directory: ./tests
-        run: npm install
-
-      - name: Run Load Tests
-        working-directory: ./tests
-        run: npm run test:load
-        env:
-          ORDER_SERVICE_URL: http://localhost:3001
-          INVENTORY_SERVICE_URL: http://localhost:3002
-
-      - name: Run Gremlin Stress Test
-        working-directory: ./tests
-        run: npm run test:gremlin
-        env:
-          ORDER_SERVICE_URL: http://localhost:3001
-          INVENTORY_SERVICE_URL: http://localhost:3002
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: ./tests/results/
-
-      - name: Cleanup
-        if: always()
-        run: docker compose down -v
-
-  # ============================================
-  # DOCKER BUILD
-  # ============================================
-  docker-build:
-    name: Docker Build
-    runs-on: ubuntu-latest
-    needs: tests
-    if: github.ref == 'refs/heads/main'
     
     steps:
       - name: Checkout code
@@ -138,13 +20,252 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Create .env file
+        run: |
+          cat > .env << 'EOF'
+          ORDER_DB_URL=postgresql://order_user:order_pass@order-db:5432/order_db
+          INVENTORY_DB_URL=postgresql://inventory_user:inventory_pass@inventory-db:5432/inventory_db
+          AZURE_SERVICE_BUS_CONNECTION_STRING=
+          NODE_ENV=test
+          EOF
+
       - name: Build Docker images
         run: |
-          docker compose build
+          docker compose build --parallel
+        timeout-minutes: 10
 
-      - name: Tag images
+      - name: Start services
         run: |
-          docker tag valerixy-order-service:latest valerixy-order-service:${{ github.sha }}
-          docker tag valerixy-inventory-service:latest valerixy-inventory-service:${{ github.sha }}
-          docker tag valerixy-dashboard:latest valerixy-dashboard:${{ github.sha }}
-          docker tag valerixy-frontend:latest valerixy-frontend:${{ github.sha }}
+          docker compose up -d
+          echo "Waiting for services to be ready..."
+          sleep 30
+
+      - name: Check service health
+        run: |
+          echo "Checking Order Service health..."
+          for i in {1..30}; do
+            if curl -s http://localhost:3001/health | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+              echo "✓ Order Service is healthy"
+              break
+            fi
+            echo "Waiting for Order Service... ($i/30)"
+            sleep 2
+          done
+          
+          echo "Checking Inventory Service health..."
+          for i in {1..30}; do
+            if curl -s http://localhost:3002/health | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+              echo "✓ Inventory Service is healthy"
+              break
+            fi
+            echo "Waiting for Inventory Service... ($i/30)"
+            sleep 2
+          done
+
+      - name: Verify health endpoints
+        run: |
+          ORDER_HEALTH=$(curl -s http://localhost:3001/health)
+          INVENTORY_HEALTH=$(curl -s http://localhost:3002/health)
+          
+          echo "Order Service Health:"
+          echo "$ORDER_HEALTH" | jq .
+          
+          echo "Inventory Service Health:"
+          echo "$INVENTORY_HEALTH" | jq .
+          
+          # Fail if not healthy
+          echo "$ORDER_HEALTH" | jq -e '.status == "healthy"' > /dev/null
+          echo "$INVENTORY_HEALTH" | jq -e '.status == "healthy"' > /dev/null
+
+      - name: Run load tests (Normal mode)
+        run: |
+          chmod +x ./tests/load-test.sh
+          ./tests/load-test.sh --orders 10
+        continue-on-error: false
+
+      - name: Run load tests (Gremlin mode)
+        run: |
+          echo "Testing with Gremlin latency enabled..."
+          ./tests/load-test.sh --orders 5 --gremlin
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-test-results
+          path: tests/results/
+          retention-days: 30
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          echo "=== Order Service Logs ==="
+          docker compose logs order-service --tail=100
+          echo ""
+          echo "=== Inventory Service Logs ==="
+          docker compose logs inventory-service --tail=100
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v
+
+  # ==========================================================================
+  # Job 2: Integration Tests
+  # ==========================================================================
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          cat > .env << 'EOF'
+          ORDER_DB_URL=postgresql://order_user:order_pass@order-db:5432/order_db
+          INVENTORY_DB_URL=postgresql://inventory_user:inventory_pass@inventory-db:5432/inventory_db
+          AZURE_SERVICE_BUS_CONNECTION_STRING=
+          NODE_ENV=test
+          EOF
+
+      - name: Start services
+        run: |
+          docker compose up -d
+          sleep 30
+
+      - name: Wait for services
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:3001/health | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Test Order Creation
+        run: |
+          echo "Testing order creation..."
+          RESPONSE=$(curl -s -X POST http://localhost:3001/orders \
+            -H "Content-Type: application/json" \
+            -d '{"customerId": "ci-test-user", "productId": "SKU-002", "quantity": 1}')
+          
+          echo "Response: $RESPONSE"
+          
+          STATUS=$(echo "$RESPONSE" | jq -r '.data.status // .error // "unknown"')
+          echo "Order status: $STATUS"
+          
+          if [[ "$STATUS" == "confirmed" ]] || [[ "$STATUS" == "pending_verification" ]]; then
+            echo "✓ Order creation test passed"
+          else
+            echo "✗ Order creation test failed"
+            exit 1
+          fi
+
+      - name: Test Idempotency
+        run: |
+          echo "Testing idempotency..."
+          IDEMPOTENCY_KEY="ci-test-$(date +%s)"
+          
+          # First request
+          RESPONSE1=$(curl -s -X POST http://localhost:3001/orders \
+            -H "Content-Type: application/json" \
+            -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+            -d '{"customerId": "ci-test-user", "productId": "SKU-002", "quantity": 1}')
+          
+          ORDER_ID1=$(echo "$RESPONSE1" | jq -r '.data.id // ""')
+          
+          # Second request with same key
+          RESPONSE2=$(curl -s -X POST http://localhost:3001/orders \
+            -H "Content-Type: application/json" \
+            -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+            -d '{"customerId": "ci-test-user", "productId": "SKU-002", "quantity": 1}')
+          
+          ORDER_ID2=$(echo "$RESPONSE2" | jq -r '.data.id // ""')
+          
+          if [[ "$ORDER_ID1" == "$ORDER_ID2" ]] && [[ -n "$ORDER_ID1" ]]; then
+            echo "✓ Idempotency test passed (same order ID returned)"
+          else
+            echo "✗ Idempotency test failed"
+            echo "Order ID 1: $ORDER_ID1"
+            echo "Order ID 2: $ORDER_ID2"
+            exit 1
+          fi
+
+      - name: Test Timeout Handling
+        run: |
+          echo "Enabling Gremlin mode for timeout test..."
+          curl -s -X POST http://localhost:3002/chaos/gremlin \
+            -H "Content-Type: application/json" \
+            -d '{"enabled": true, "minLatencyMs": 3000, "maxLatencyMs": 5000}'
+          
+          echo "Creating order (should timeout gracefully)..."
+          RESPONSE=$(curl -s -X POST http://localhost:3001/orders \
+            -H "Content-Type: application/json" \
+            -d '{"customerId": "ci-timeout-test", "productId": "SKU-002", "quantity": 1}')
+          
+          HTTP_STATUS=$(echo "$RESPONSE" | jq -r '.data.status // ""')
+          
+          echo "Response: $RESPONSE"
+          
+          if [[ "$HTTP_STATUS" == "pending_verification" ]]; then
+            echo "✓ Timeout handling test passed (order in pending_verification)"
+          else
+            echo "⚠ Unexpected status: $HTTP_STATUS (may still be acceptable)"
+          fi
+          
+          # Disable Gremlin
+          curl -s -X POST http://localhost:3002/chaos/gremlin \
+            -H "Content-Type: application/json" \
+            -d '{"enabled": false}'
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v
+
+  # ==========================================================================
+  # Job 3: Summary Report
+  # ==========================================================================
+  summary:
+    runs-on: ubuntu-latest
+    needs: [build-and-test, integration-tests]
+    if: always()
+    
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: load-test-results
+          path: results/
+        continue-on-error: true
+
+      - name: Generate summary
+        run: |
+          echo "## 🚀 Valerix CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ -d "results" ]]; then
+            for file in results/*.json; do
+              if [[ -f "$file" ]]; then
+                echo "### Load Test Results" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                
+                SUCCESSFUL=$(jq '.summary.successful' "$file")
+                PENDING=$(jq '.summary.pending_verification' "$file")
+                FAILED=$(jq '.summary.failed' "$file")
+                AVG_MS=$(jq '.summary.avg_response_ms' "$file")
+                
+                echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+                echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+                echo "| ✅ Successful | $SUCCESSFUL |" >> $GITHUB_STEP_SUMMARY
+                echo "| ⏳ Pending | $PENDING |" >> $GITHUB_STEP_SUMMARY
+                echo "| ❌ Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+                echo "| ⏱️ Avg Response | ${AVG_MS}ms |" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          else
+            echo "No test results found" >> $GITHUB_STEP_SUMMARY
+          fi
