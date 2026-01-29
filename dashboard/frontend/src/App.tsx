@@ -24,9 +24,9 @@ interface ChaosStatus {
   schrödingerEnabled: boolean;
 }
 
-// Rolling window alert threshold
-const ALERT_THRESHOLD_MS = 1000; // 1 second
-const ROLLING_WINDOW_MS = 30000; // 30 seconds
+// Alert threshold: 1 second (1000ms) average over 30 second window
+const ALERT_THRESHOLD_MS = 1000;
+const ROLLING_WINDOW_SECONDS = 30;
 
 function App() {
   const [connected, setConnected] = useState(false);
@@ -40,41 +40,33 @@ function App() {
     gremlinEnabled: false,
     schrödingerEnabled: false,
   });
-  const [currentTime, setCurrentTime] = useState(Date.now());
   
   const wsRef = useRef<WebSocket | null>(null);
 
   // Calculate rolling 30-second average response time
-  const rollingAverage = useMemo(() => {
-    const now = currentTime;
-    const windowStart = now - ROLLING_WINDOW_MS;
+  const { avgResponseTime, isAlertActive, recentCount } = useMemo(() => {
+    const now = Date.now();
+    const windowStart = now - (ROLLING_WINDOW_SECONDS * 1000);
     
-    const recentResponses = responseTimes.filter((rt) => {
+    // Filter response times within the 30-second window
+    const recentTimes = responseTimes.filter(rt => {
       const rtTime = new Date(rt.timestamp).getTime();
-      return rtTime >= windowStart && rtTime <= now;
+      return rtTime >= windowStart;
     });
     
-    if (recentResponses.length === 0) {
-      return { average: 0, count: 0, isAlert: false };
+    if (recentTimes.length === 0) {
+      return { avgResponseTime: 0, isAlertActive: false, recentCount: 0 };
     }
     
-    const total = recentResponses.reduce((sum, rt) => sum + rt.durationMs, 0);
-    const average = total / recentResponses.length;
+    const totalMs = recentTimes.reduce((sum, rt) => sum + rt.durationMs, 0);
+    const avg = totalMs / recentTimes.length;
     
     return {
-      average: Math.round(average),
-      count: recentResponses.length,
-      isAlert: average > ALERT_THRESHOLD_MS,
+      avgResponseTime: Math.round(avg),
+      isAlertActive: avg > ALERT_THRESHOLD_MS,
+      recentCount: recentTimes.length,
     };
-  }, [responseTimes, currentTime]);
-
-  // Update current time every second for rolling window calculation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+  }, [responseTimes]);
 
   const connectWebSocket = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -253,28 +245,25 @@ function App() {
         </div>
       </header>
 
-      <div className="grid">
-        {/* Rolling 30s Alert Banner */}
-        <div className={`alert-banner ${rollingAverage.isAlert ? 'alert' : 'ok'}`}>
-          <div className="alert-indicator">
-            <span className={`alert-light ${rollingAverage.isAlert ? 'red' : 'green'}`} />
-            <span className="alert-label">
-              {rollingAverage.isAlert ? '⚠️ HIGH LATENCY ALERT' : '✓ System Normal'}
-            </span>
-          </div>
-          <div className="alert-stats">
-            <span className="alert-avg">
-              Avg: <strong>{rollingAverage.average}ms</strong>
-            </span>
-            <span className="alert-window">
-              ({rollingAverage.count} requests in last 30s)
-            </span>
-            <span className="alert-threshold">
-              Threshold: {ALERT_THRESHOLD_MS}ms
-            </span>
-          </div>
+      {/* Response Time Alert Banner */}
+      <div className={`alert-banner ${isAlertActive ? 'alert-red' : 'alert-green'}`}>
+        <div className="alert-indicator">
+          <span className={`alert-dot ${isAlertActive ? 'red' : 'green'}`} />
+          <span className="alert-status">
+            {isAlertActive ? '⚠️ HIGH LATENCY' : '✓ NORMAL'}
+          </span>
         </div>
+        <div className="alert-details">
+          <span className="alert-metric">
+            Avg Response Time (30s): <strong>{avgResponseTime}ms</strong>
+          </span>
+          <span className="alert-threshold">
+            Threshold: {ALERT_THRESHOLD_MS}ms | Samples: {recentCount}
+          </span>
+        </div>
+      </div>
 
+      <div className="grid">
         {/* Services Health */}
         <div className="card">
           <h2>Services Health</h2>

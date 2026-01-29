@@ -44,3 +44,4 @@ postgres-data/
 tmp/
 temp/
 .cache/
+tests/results/
