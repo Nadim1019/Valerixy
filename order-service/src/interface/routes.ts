@@ -37,7 +37,10 @@ router.get('/products', async (req: Request, res: Response) => {
  */
 router.post('/orders', async (req: Request, res: Response) => {
   const startTime = Date.now();
-  const { customerId, productId, quantity, idempotencyKey } = req.body;
+  const { customerId, productId, quantity, idempotencyKey: bodyIdempotencyKey } = req.body;
+  
+  // Support idempotency key from header (standard) or body
+  const idempotencyKey = (req.headers['idempotency-key'] as string) || bodyIdempotencyKey;
   
   // Validation
   if (!customerId || !productId || !quantity) {
