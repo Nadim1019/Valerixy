@@ -2,20 +2,89 @@ syntax = "proto3";
 
 package inventory;
 
-// The inventory service definition.
-service Inventory {
-  // Adjusts stock for an item
-  rpc AdjustStock (StockAdjustmentRequest) returns (StockAdjustmentResponse);
+option java_multiple_files = true;
+option java_package = "com.valerix.inventory";
+
+// Inventory Service - manages stock levels
+service InventoryService {
+  // Reserve stock for an order (synchronous)
+  rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
+  
+  // Release previously reserved stock (order cancelled)
+  rpc ReleaseStock(ReleaseStockRequest) returns (ReleaseStockResponse);
+  
+  // Check current stock level
+  rpc CheckStock(CheckStockRequest) returns (CheckStockResponse);
+  
+  // Health check for gRPC
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
 
-// The request message containing the item's ID and quantity to adjust.
-message StockAdjustmentRequest {
-  string itemId = 1;
-  int32 quantity = 2;
+// ============================================
+// Reserve Stock
+// ============================================
+message ReserveStockRequest {
+  string order_id = 1;
+  string product_id = 2;
+  int32 quantity = 3;
+  string idempotency_key = 4; // For duplicate detection
 }
 
-// The response message confirming the stock adjustment.
-message StockAdjustmentResponse {
-  string transactionId = 1;
-  bool success = 2;
+message ReserveStockResponse {
+  bool success = 1;
+  string message = 2;
+  string reservation_id = 3;
+  int32 remaining_stock = 4;
+  ReservationStatus status = 5;
+}
+
+enum ReservationStatus {
+  RESERVATION_STATUS_UNSPECIFIED = 0;
+  RESERVATION_STATUS_CONFIRMED = 1;
+  RESERVATION_STATUS_INSUFFICIENT_STOCK = 2;
+  RESERVATION_STATUS_PRODUCT_NOT_FOUND = 3;
+  RESERVATION_STATUS_ALREADY_EXISTS = 4;
+}
+
+// ============================================
+// Release Stock
+// ============================================
+message ReleaseStockRequest {
+  string order_id = 1;
+  string reservation_id = 2;
+  string reason = 3; // e.g., "order_cancelled", "order_expired"
+}
+
+message ReleaseStockResponse {
+  bool success = 1;
+  string message = 2;
+  int32 new_stock = 3;
+}
+
+// ============================================
+// Check Stock
+// ============================================
+message CheckStockRequest {
+  string product_id = 1;
+}
+
+message CheckStockResponse {
+  bool found = 1;
+  string product_id = 2;
+  string product_name = 3;
+  int32 available_stock = 4;
+  int32 reserved_stock = 5;
+}
+
+// ============================================
+// Health Check
+// ============================================
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string message = 2;
+  map<string, string> dependencies = 3;
 }

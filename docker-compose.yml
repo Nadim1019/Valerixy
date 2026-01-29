@@ -1,50 +1,146 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:13
-    restart: always
+  # ============================================
+  # DATABASES
+  # ============================================
+  order-db:
+    image: postgres:15-alpine
+    container_name: valerix-order-db
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${ORDER_DB_USER:-order_admin}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:-order_secret}
+      POSTGRES_DB: ${ORDER_DB_NAME:-order_db}
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - order-db-data:/var/lib/postgresql/data
+      - ./order-service/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORDER_DB_USER:-order_admin} -d ${ORDER_DB_NAME:-order_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - valerix-network
+
+  inventory-db:
+    image: postgres:15-alpine
+    container_name: valerix-inventory-db
+    environment:
+      POSTGRES_USER: ${INVENTORY_DB_USER:-inventory_admin}
+      POSTGRES_PASSWORD: ${INVENTORY_DB_PASSWORD:-inventory_secret}
+      POSTGRES_DB: ${INVENTORY_DB_NAME:-inventory_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - inventory-db-data:/var/lib/postgresql/data
+      - ./inventory-service/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${INVENTORY_DB_USER:-inventory_admin} -d ${INVENTORY_DB_NAME:-inventory_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - valerix-network
+
+  # ============================================
+  # SERVICES
+  # ============================================
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    container_name: valerix-order-service
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      HTTP_PORT: 3001
+      DB_HOST: order-db
+      DB_PORT: 5432
+      DB_NAME: ${ORDER_DB_NAME:-order_db}
+      DB_USER: ${ORDER_DB_USER:-order_admin}
+      DB_PASSWORD: ${ORDER_DB_PASSWORD:-order_secret}
+      INVENTORY_SERVICE_HOST: inventory-service:50051
+      INVENTORY_HTTP_URL: http://inventory-service:3002
+      AZURE_SERVICE_BUS_CONNECTION_STRING: ${AZURE_SERVICE_BUS_CONNECTION_STRING}
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING}
+    volumes:
+      - ./protos:/app/protos:ro
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks:
+      - valerix-network
+    restart: unless-stopped
 
   inventory-service:
     build:
       context: ./inventory-service
-    restart: on-failure
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_HOST=postgres
-      - SERVICE_BUS_CONNECTION_STRING=${SERVICE_BUS_CONNECTION_STRING}
-      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
-      - GREMLIN_MODE=${GREMLIN_MODE}
-      - INVENTORY_SERVICE_PORT=50052
+      dockerfile: Dockerfile
+    container_name: valerix-inventory-service
     ports:
-      - "50052:50052"
+      - "50051:50051"
+      - "3002:3002"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      GRPC_PORT: 50051
+      HTTP_PORT: 3002
+      DB_HOST: inventory-db
+      DB_PORT: 5432
+      DB_NAME: ${INVENTORY_DB_NAME:-inventory_db}
+      DB_USER: ${INVENTORY_DB_USER:-inventory_admin}
+      DB_PASSWORD: ${INVENTORY_DB_PASSWORD:-inventory_secret}
+      AZURE_SERVICE_BUS_CONNECTION_STRING: ${AZURE_SERVICE_BUS_CONNECTION_STRING}
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING}
+    volumes:
+      - ./protos:/app/protos:ro
     depends_on:
-      - postgres
+      inventory-db:
+        condition: service_healthy
+    networks:
+      - valerix-network
+    restart: unless-stopped
 
-  order-service:
+  dashboard:
     build:
-      context: ./order-service
-    restart: on-failure
-    environment:
-      - SERVICE_BUS_CONNECTION_STRING=${SERVICE_BUS_CONNECTION_STRING}
-      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING}
-      - INVENTORY_SERVICE_URL=inventory-service:50052
-      - ORDER_SERVICE_PORT=3000
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: valerix-dashboard
     ports:
-      - "3000:3000"
+      - "3003:3003"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      HTTP_PORT: 3003
+      ORDER_SERVICE_URL: http://order-service:3001
+      INVENTORY_SERVICE_URL: http://inventory-service:3002
+      AZURE_SERVICE_BUS_CONNECTION_STRING: ${AZURE_SERVICE_BUS_CONNECTION_STRING}
     depends_on:
+      - order-service
       - inventory-service
+    networks:
+      - valerix-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: valerix-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - order-service
+      - inventory-service
+    networks:
+      - valerix-network
+    restart: unless-stopped
 
 volumes:
-  postgres_data:
+  order-db-data:
+  inventory-db-data:
+
+networks:
+  valerix-network:
+    driver: bridge

@@ -1,18 +1,36 @@
 {
   "name": "inventory-service",
   "version": "1.0.0",
-  "description": "Manages stock and handles order verification.",
-  "main": "src/server.js",
+  "description": "Valerix Inventory Service - gRPC server for stock management",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "proto:generate": "grpc_tools_node_protoc --js_out=import_style=commonjs,binary:./src/generated --grpc_out=grpc_js:./src/generated --plugin=protoc-gen-grpc=./node_modules/.bin/grpc_tools_node_protoc_plugin -I ../protos ../protos/*.proto && grpc_tools_node_protoc --plugin=protoc-gen-ts=./node_modules/.bin/protoc-gen-ts --ts_out=grpc_js:./src/generated -I ../protos ../protos/*.proto",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.8.0",
+    "@azure/service-bus": "^7.9.0",
+    "@grpc/grpc-js": "^1.9.0",
     "@grpc/proto-loader": "^0.7.0",
-    "pg": "^8.8.0",
-    "dotenv": "^16.0.3",
-    "applicationinsights": "^2.3.5",
-    "uuid": "^9.0.0",
-    "@azure/service-bus": "^7.7.2"
+    "applicationinsights": "^2.9.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.0",
+    "express": "^4.18.0",
+    "pg": "^8.11.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.0",
+    "@types/express": "^4.17.0",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.10.0",
+    "@types/uuid": "^9.0.0",
+    "grpc-tools": "^1.12.0",
+    "grpc_tools_node_protoc_ts": "^5.3.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.0.0"
   }
 }

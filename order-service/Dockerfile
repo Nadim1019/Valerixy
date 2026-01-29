@@ -1,23 +1,28 @@
-# Use an official Node.js runtime as a parent image
 FROM node:18-alpine
 
-# Set the working directory in the container
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copy package files
 COPY package*.json ./
 
-# Install any needed packages
+# Install dependencies
 RUN npm install
 
-# Bundle app source
+# Copy proto files (will be mounted via docker-compose)
+RUN mkdir -p /app/protos
+
+# Copy source
 COPY . .
 
-# Make port 3000 available to the world outside this container
-EXPOSE 3000
+# Build TypeScript
+RUN npm run build
 
-# Define environment variable
-ENV NODE_ENV production
+# Expose ports
+EXPOSE 3001
 
-# Run the app when the container launches
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
+
+# Start service
 CMD ["npm", "start"]

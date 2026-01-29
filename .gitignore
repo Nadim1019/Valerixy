@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+build/
+*.js.map
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Docker
+docker-compose.override.yml
+
+# Database volumes (local)
+postgres-data/
+*-db-data/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Temporary files
+tmp/
+temp/
+.cache/
